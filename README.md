@@ -1,21 +1,23 @@
 ## Solana JSON RPC HTTPS Proxy
 
-This repository provides an https proxy to the JOSN RPC endpoint of a Solana
+This repository provides an https proxy to the JSON RPC endpoint of a Solana
 full node.
 
 ## Prerequisites
 
 The machine must have the following:
-
 1. Docker installed
-2. TCP ports 80 and 443 available
-3. A static IP with an associated FQDN
+1. TCP ports 80 and 443 available
+1. A static IP with an associated FQDN
 
 ## Usage:
 
+The following command will create/start a Docker container (restarts on boot) that forwards https traffic from `my-fullnode-domain.example.com:443` to the standard JSON RPC port of `my-fullnode-domain.example.com:8899`:  
 ```
 $ ./start.sh my-fullnode-domain.example.com me@example.com
 ```
+
+Run `./start.sh` with no arguments for more usage information.
 
 ## Copyright
 
