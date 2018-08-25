@@ -1,0 +1,22 @@
+#!/bin/bash -ex
+
+if [[ -z "$EMAIL" || -z "$DOMAIN" ]]; then
+  echo EMAIL and/or DOMAIN not specified
+  exit 1
+fi
+
+service apache2 start
+
+certbot \
+  --agree-tos \
+  --expand \
+  --no-redirect \
+  --non-interactive \
+  --preferred-challenges=http \
+  -a webroot \
+  -d "$DOMAIN" \
+  -i apache \
+  -m "$EMAIL" \
+  -w /var/www/webproxy-root \
+
+service apache2 stop || true
