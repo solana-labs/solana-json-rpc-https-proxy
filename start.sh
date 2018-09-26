@@ -126,6 +126,7 @@ fi
 
 (
   set +ex
+  docker update --restart=no $CONTAINER
   docker stop $CONTAINER
   docker rm $CONTAINER
 ) || true
