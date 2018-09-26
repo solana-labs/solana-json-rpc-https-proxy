@@ -9,7 +9,7 @@ usage() {
   fi
 
   cat <<EOF
-usage: $0 [domain] [email] [json-rpc-host]
+usage: $0 [domain] [email] [json-rpc-path1] [json-rpc-host1] [json-rpc-path2] [json-rpc-host2] ...
 
 Starts a Docker container running an Apache2 server that provides a https proxy
 into the specified JSON RPC endpoint.  The TLS certificate is automatically
@@ -17,8 +17,10 @@ created using Let's Encrypt.
 
   domain          The fully-qualified domain name for this machine
   email           Contact email provided to Let's Encrypt
-  json-rpc-host   Host name of the JSON RPC endpoint (port 8899 is assumed)
-                  If unspecifed, "domain" will be used.
+  json-rpc-path1  URL path to map to the the first JSON RPC endpoint
+  json-rpc-host1  Host name of the first JSON RPC endpoint (port 8899 is assumed)
+  json-rpc-path2  ...
+  json-rpc-host2  ...
 
 EOF
 
@@ -27,24 +29,44 @@ EOF
 
 cd "$(dirname "$0")"
 
-[[ -n "$1" && -z "$4" ]] || usage
 DOMAIN="$1"
 EMAIL="$2"
-RPC_HOST="$3"
-if [[ -z $RPC_HOST ]]; then
-  RPC_HOST="$DOMAIN"
-fi
-
 [[ -n $DOMAIN ]] || usage "domain not specified"
 [[ -n $EMAIL ]] || usage "email not specified"
-[[ -n $RPC_HOST ]] || usage "json-rpc-host not specified"
 
-RPC_ENDPOINT="$RPC_HOST:8899"
+proxyList=()
+
+shift 2
+while [[ -n $1 ]]; do
+  [[ -n $2 ]] || usage "json-rpc-host not specified"
+  proxyList+=("$1 $2:8899")
+  shift 2
+done
+
+[[ ${#proxyList[@]} -gt 0 ]] || usage "No JSON RPC endpoints specified"
+for info in "${proxyList[@]}"; do
+  echo $info
+done
+
 IMAGE=solana-json-rpc-https-proxy
 CONTAINER=$IMAGE
 
 rm -rf sites-available/
 mkdir sites-available/
+
+addProxyPass() {
+  local path=$1
+  local rpcEndPoint=$2
+  echo "ProxyPass $path http://$rpcEndPoint/"
+  echo "ProxyPassReverse $path http://$rpcEndPoint/"
+}
+
+addProxyPasses() {
+  declare info
+  for info in "${proxyList[@]}"; do
+    addProxyPass $info
+  done
+}
 
 cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
 <IfModule mod_ssl.c>
@@ -69,8 +91,7 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
     AllowEncodedSlashes NoDecode
 
     ProxyPassMatch /.well-known/acme-challenge/(.*) !
-    ProxyPass / http://$RPC_ENDPOINT/
-    ProxyPassReverse / http://$RPC_ENDPOINT/
+    $(addProxyPasses)
   </VirtualHost>
 </IfModule>
 
@@ -87,8 +108,7 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
   AllowEncodedSlashes NoDecode
 
   ProxyPassMatch /.well-known/acme-challenge/(.*) !
-  ProxyPass / http://$RPC_ENDPOINT/
-  ProxyPassReverse / http://$RPC_ENDPOINT/
+  $(addProxyPasses)
 </VirtualHost>
 EOF
 

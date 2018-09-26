@@ -12,9 +12,18 @@ The machine must have the following:
 
 ## Usage:
 
-The following command will create/start a Docker container (restarts on boot) that forwards https traffic from `my-fullnode-domain.example.com:443` to the standard JSON RPC port of `my-fullnode-domain.example.com:8899`:  
+The following command will create/start a Docker container (restarts on boot) that forwards
+https traffic from `my-fullnode-domain.example.com:443` to the standard JSON RPC port of
+`my-fullnode-domain.example.com:8899`:
+```bash
+$ ./start.sh my-fullnode-domain.example.com me@example.com / my-fullnode-domain.example.com
 ```
-$ ./start.sh my-fullnode-domain.example.com me@example.com
+
+For multiple forwards:
+```bash
+$ ./start.sh api.testnet.solana.com user@example.com \
+   /master master.testnet.solana.com \
+   / testnet.solana.com
 ```
 
 Run `./start.sh` with no arguments for more usage information.
