@@ -18,7 +18,7 @@ created using Let's Encrypt.
   domain          The fully-qualified domain name for this machine
   email           Contact email provided to Let's Encrypt
   json-rpc-path1  URL path to map to the the first JSON RPC endpoint
-  json-rpc-host1  Host name of the first JSON RPC endpoint (port 8899 is assumed)
+  json-rpc-host1  Host name of the first JSON RPC endpoint (port 8899/8900 is assumed)
   json-rpc-path2  ...
   json-rpc-host2  ...
 
@@ -34,17 +34,20 @@ EMAIL="$2"
 [[ -n $DOMAIN ]] || usage "domain not specified"
 [[ -n $EMAIL ]] || usage "email not specified"
 
-proxyList=()
+httpProxyList=()
+wsProxyList=()
 
 shift 2
 while [[ -n $1 ]]; do
   [[ -n $2 ]] || usage "json-rpc-host not specified"
-  proxyList+=("$1 $2:8899")
+  httpProxyList+=("$1 $2:8899")
+  wsProxyList+=("$1 $2:8900")
   shift 2
 done
 
-[[ ${#proxyList[@]} -gt 0 ]] || usage "No JSON RPC endpoints specified"
-for info in "${proxyList[@]}"; do
+[[ ${#httpProxyList[@]} -gt 0 ]] || usage "No JSON RPC endpoints specified"
+for info in "${httpProxyList[@]}"; do
+  # shellcheck disable=2086
   echo $info
 done
 
@@ -54,17 +57,34 @@ CONTAINER=$IMAGE
 rm -rf sites-available/
 mkdir sites-available/
 
-addProxyPass() {
+
+addHttpProxyPass() {
   local path=$1
   local rpcEndPoint=$2
   echo "ProxyPass $path http://$rpcEndPoint/"
   echo "ProxyPassReverse $path http://$rpcEndPoint/"
 }
 
-addProxyPasses() {
+addHttpProxyPasses() {
   declare info
-  for info in "${proxyList[@]}"; do
-    addProxyPass $info
+  for info in "${httpProxyList[@]}"; do
+    # shellcheck disable=2086
+    addHttpProxyPass $info
+  done
+}
+
+addWebSocketProxyPass() {
+  local path=$1
+  local rpcEndPoint=$2
+  echo "ProxyPass $path ws://$rpcEndPoint/"
+  echo "ProxyPassReverse $path ws://$rpcEndPoint/"
+}
+
+addWebSocketProxyPasses() {
+  declare info
+  for info in "${wsProxyList[@]}"; do
+    # shellcheck disable=2086
+    addWebSocketProxyPass $info
   done
 }
 
@@ -83,7 +103,7 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
     # HSTS (mod_headers is required) (15768000 seconds = 6 months)
     Header always set Strict-Transport-Security "max-age=15768000"
 
-    ErrorLog \${APACHE_LOG_DIR}/error.log
+    ErrorLog \${APACHE_LOG_DIR}/error-443.log
     DocumentRoot /var/www/webproxy-root
 
     ProxyRequests Off
@@ -91,7 +111,7 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
     AllowEncodedSlashes NoDecode
 
     ProxyPassMatch /.well-known/acme-challenge/(.*) !
-    $(addProxyPasses)
+    $(addHttpProxyPasses)
   </VirtualHost>
 </IfModule>
 
@@ -100,7 +120,7 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
   RequestHeader set X-Forwarded-Proto "http"
   RequestHeader set X-Forwarded-Port "80"
 
-  ErrorLog ${APACHE_LOG_DIR}/error.log
+  ErrorLog \${APACHE_LOG_DIR}/error-80.log
   DocumentRoot /var/www/webproxy-root
 
   ProxyRequests Off
@@ -108,13 +128,68 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
   AllowEncodedSlashes NoDecode
 
   ProxyPassMatch /.well-known/acme-challenge/(.*) !
-  $(addProxyPasses)
+  $(addHttpProxyPasses)
 </VirtualHost>
+
+Listen 8899
+<VirtualHost *:8899>
+  ServerName $DOMAIN
+
+  ErrorLog \${APACHE_LOG_DIR}/error-8899.log
+  DocumentRoot /var/www/webproxy-root
+
+  ProxyRequests Off
+  ProxyPreserveHost On
+  AllowEncodedSlashes NoDecode
+
+  $(addHttpProxyPasses)
+</VirtualHost>
+
+
+Listen 8900
+<VirtualHost *:8900>
+  ServerName $DOMAIN
+  ErrorLog \${APACHE_LOG_DIR}/error-8900.log
+  DocumentRoot /var/www/webproxy-root
+
+  ProxyRequests Off
+  ProxyPreserveHost On
+  AllowEncodedSlashes NoDecode
+
+  #RewriteCond %{HTTP:Upgrade} =websocket [NC]
+  #RewriteRule ^/(.*)    ws://testnet.solana.com:8900/\$1 [P,L]
+
+  $(addWebSocketProxyPasses)
+</VirtualHost>
+
+<IfModule mod_ssl.c>
+  Listen 8901 https
+  <VirtualHost *:8901>
+    ServerName $DOMAIN
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/$DOMAIN/privkey.pem
+
+    # https://mozilla.github.io/server-side-tls/ssl-config-generator/
+    # HSTS (mod_headers is required) (15768000 seconds = 6 months)
+    Header always set Strict-Transport-Security "max-age=15768000"
+
+    ErrorLog \${APACHE_LOG_DIR}/error-8901.log
+    DocumentRoot /var/www/webproxy-root
+
+    #RewriteCond %{HTTP:Upgrade} =websocket [NC]
+    #RewriteRule ^/(.*)    ws://testnet.solana.com:8900/\$1 [P,L]
+
+    $(addWebSocketProxyPasses)
+  </VirtualHost>
+</IfModule>
+
 EOF
 
 (
   set -x
-  docker build -t $IMAGE .
+  docker build --no-cache -t $IMAGE .
 )
 
 DEV=false
@@ -125,7 +200,7 @@ if $DEV; then
 fi
 
 (
-  set +ex
+  set -ex
   docker update --restart=no $CONTAINER
   docker stop $CONTAINER
   docker rm $CONTAINER
@@ -139,6 +214,9 @@ ARGS=(
   --detach
   --publish 80:80
   --publish 443:443
+  --publish 8899:8899
+  --publish 8900:8900
+  --publish 8901:8901
   --name "$CONTAINER"
 )
 
