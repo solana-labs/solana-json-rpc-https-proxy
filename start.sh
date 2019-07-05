@@ -36,12 +36,14 @@ EMAIL="$2"
 
 httpProxyList=()
 wsProxyList=()
+blockexplorerApiProxyList=()
 
 shift 2
 while [[ -n $1 ]]; do
   [[ -n $2 ]] || usage "json-rpc-host not specified"
   httpProxyList+=("$1 $2:8899")
   wsProxyList+=("$1 $2:8900")
+  blockexplorerApiProxyList+=("$1 $2:3001")
   shift 2
 done
 
@@ -60,9 +62,9 @@ mkdir sites-available/
 
 addHttpProxyPass() {
   local path=$1
-  local rpcEndPoint=$2
-  echo "ProxyPass $path http://$rpcEndPoint/"
-  echo "ProxyPassReverse $path http://$rpcEndPoint/"
+  local endPoint=$2
+  echo "ProxyPass $path http://$endPoint/"
+  echo "ProxyPassReverse $path http://$endPoint/"
 }
 
 addHttpProxyPasses() {
@@ -75,9 +77,9 @@ addHttpProxyPasses() {
 
 addWebSocketProxyPass() {
   local path=$1
-  local rpcEndPoint=$2
-  echo "ProxyPass $path ws://$rpcEndPoint/"
-  echo "ProxyPassReverse $path ws://$rpcEndPoint/"
+  local endPoint=$2
+  echo "ProxyPass $path ws://$endPoint/"
+  echo "ProxyPassReverse $path ws://$endPoint/"
 }
 
 addWebSocketProxyPasses() {
@@ -87,6 +89,15 @@ addWebSocketProxyPasses() {
     addWebSocketProxyPass $info
   done
 }
+
+addBlockexplorerApiProxyPasses() {
+  declare info
+  for info in "${blockexplorerApiProxyList[@]}"; do
+    # shellcheck disable=2086
+    addHttpProxyPass $info
+  done
+}
+
 
 cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
 <IfModule mod_ssl.c>
@@ -112,6 +123,31 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
 
     ProxyPassMatch /.well-known/acme-challenge/(.*) !
     $(addHttpProxyPasses)
+  </VirtualHost>
+
+  Listen 3443
+  <VirtualHost *:3443>
+    ServerName $DOMAIN
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Forwarded-Port "3443"
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/$DOMAIN/privkey.pem
+
+    # https://mozilla.github.io/server-side-tls/ssl-config-generator/
+    # HSTS (mod_headers is required) (15768000 seconds = 6 months)
+    Header always set Strict-Transport-Security "max-age=15768000"
+
+    ErrorLog \${APACHE_LOG_DIR}/error-3443.log
+    DocumentRoot /var/www/webproxy-root
+
+    ProxyRequests Off
+    ProxyPreserveHost On
+    AllowEncodedSlashes NoDecode
+
+    ProxyPassMatch /.well-known/acme-challenge/(.*) !
+    $(addBlockexplorerApiProxyPasses)
   </VirtualHost>
 </IfModule>
 
@@ -156,9 +192,6 @@ Listen 8900
   ProxyPreserveHost On
   AllowEncodedSlashes NoDecode
 
-  #RewriteCond %{HTTP:Upgrade} =websocket [NC]
-  #RewriteRule ^/(.*)    ws://testnet.solana.com:8900/\$1 [P,L]
-
   $(addWebSocketProxyPasses)
 </VirtualHost>
 
@@ -177,9 +210,6 @@ Listen 8900
 
     ErrorLog \${APACHE_LOG_DIR}/error-8901.log
     DocumentRoot /var/www/webproxy-root
-
-    #RewriteCond %{HTTP:Upgrade} =websocket [NC]
-    #RewriteRule ^/(.*)    ws://testnet.solana.com:8900/\$1 [P,L]
 
     $(addWebSocketProxyPasses)
   </VirtualHost>
@@ -214,6 +244,7 @@ ARGS=(
   --detach
   --publish 80:80
   --publish 443:443
+  --publish 3443:3443
   --publish 8899:8899
   --publish 8900:8900
   --publish 8901:8901
