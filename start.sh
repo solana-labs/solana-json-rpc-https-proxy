@@ -60,41 +60,36 @@ rm -rf sites-available/
 mkdir sites-available/
 
 
-addHttpProxyPass() {
+addProxyPass() {
   local path=$1
   local endPoint=$2
-  echo "ProxyPass $path http://$endPoint/"
-  echo "ProxyPassReverse $path http://$endPoint/"
+  local protocol=$3
+  echo "ProxyPass $path $protocol://$endPoint/"
+  echo "ProxyPassReverse $path $protocol://$endPoint/"
 }
 
 addHttpProxyPasses() {
   declare info
   for info in "${httpProxyList[@]}"; do
     # shellcheck disable=2086
-    addHttpProxyPass $info
+    addProxyPass $info http
   done
-}
-
-addWebSocketProxyPass() {
-  local path=$1
-  local endPoint=$2
-  echo "ProxyPass $path ws://$endPoint/"
-  echo "ProxyPassReverse $path ws://$endPoint/"
 }
 
 addWebSocketProxyPasses() {
   declare info
   for info in "${wsProxyList[@]}"; do
     # shellcheck disable=2086
-    addWebSocketProxyPass $info
+    addWebSocketProxyPass $info ws
   done
 }
 
 addBlockexplorerApiProxyPasses() {
+  local protocol=$1
   declare info
   for info in "${blockexplorerApiProxyList[@]}"; do
     # shellcheck disable=2086
-    addHttpProxyPass $info
+    addProxyPass $info "$protocol"
   done
 }
 
@@ -146,8 +141,25 @@ cat > sites-available/solana-json-rpc-https-proxy.conf <<EOF
     ProxyPreserveHost On
     AllowEncodedSlashes NoDecode
 
-    ProxyPassMatch /.well-known/acme-challenge/(.*) !
-    $(addBlockexplorerApiProxyPasses)
+    $(addBlockexplorerApiProxyPasses http)
+  </VirtualHost>
+
+  Listen 3444 https
+  <VirtualHost *:3444>
+    ServerName $DOMAIN
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/$DOMAIN/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/$DOMAIN/privkey.pem
+
+    # https://mozilla.github.io/server-side-tls/ssl-config-generator/
+    # HSTS (mod_headers is required) (15768000 seconds = 6 months)
+    Header always set Strict-Transport-Security "max-age=15768000"
+
+    ErrorLog \${APACHE_LOG_DIR}/error-3444.log
+    DocumentRoot /var/www/webproxy-root
+
+    $(addBlockexplorerApiProxyPasses ws)
   </VirtualHost>
 </IfModule>
 
